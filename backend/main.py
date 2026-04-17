@@ -21,9 +21,9 @@ app = FastAPI(title="CrowdSync API", description="Proactive stadium crowd manage
 # Security: Add CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Secure in an actual prod environment
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], 
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -97,9 +97,9 @@ async def chat_concierge(request: ChatRequest):
             # Fallback when no API Key is given
             return ChatResponse(reply=f"Simulated response to: {sanitized_message} (No Google API key found)")
 
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-3-flash')
         prompt = f"You are an AI Concierge for a stadium. Be helpful, concise, and polite. User asks: {sanitized_message}"
-        response = model.generate_content(prompt)
+        response = await model.generate_content_async(prompt)
         
         reply_text = response.text if response.parts else "I'm sorry, I couldn't understand that."
         return ChatResponse(reply=reply_text)

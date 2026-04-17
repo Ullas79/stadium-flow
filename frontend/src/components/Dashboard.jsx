@@ -25,7 +25,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000); // Poll every 5 seconds
+    const interval = setInterval(fetchStatus, 30000); // Poll every 30 seconds to match cache
     return () => clearInterval(interval);
   }, []);
 
