@@ -12,6 +12,9 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
+# Create non-root user (Cloud Run security best practice)
+RUN adduser --disabled-password --no-create-home appuser
+
 # Install backend dependencies
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
@@ -21,6 +24,9 @@ COPY backend/ ./backend/
 
 # Copy built frontend from Stage 1 into backend for static serving
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
+
+# Switch to non-root user
+USER appuser
 
 # Expose port 8080 (Cloud Run default)
 ENV PORT="8080"

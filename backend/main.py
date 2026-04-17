@@ -6,15 +6,25 @@ import os
 import time
 import random
 import re
+import logging
+from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+# Cache time-to-live in seconds
+CACHE_TTL: int = 30
+# Maximum allowed length for a chat message
+MAX_MESSAGE_LENGTH: int = 500
 
 app = FastAPI(title="CrowdSync API", description="Proactive stadium crowd management system")
 
@@ -34,77 +44,147 @@ if GENAI_API_KEY:
 
 # --- State & Caching ---
 class StadiumState:
-    def __init__(self):
-        self.cached_status = None
-        self.last_update_time = 0
+    """Holds in-memory cached stadium data for efficient polling responses."""
+
+    def __init__(self) -> None:
+        self.cached_status: dict[str, Any] | None = None
+        self.last_update_time: float = 0.0
 
 state = StadiumState()
 
-# --- Models ---
+# Singleton Gemini model — instantiated once, reused per request.
+_gemini_model: genai.GenerativeModel | None = None
+
+def get_gemini_model() -> genai.GenerativeModel:
+    """Return a cached Gemini model instance, creating it only once."""
+    global _gemini_model
+    if _gemini_model is None:
+        _gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    return _gemini_model
+
+# --- Pydantic Models ---
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_LENGTH, description="User chat message")
 
 class ChatResponse(BaseModel):
-    reply: str
+    reply: str = Field(..., description="AI Concierge reply")
+
+class StatusResponse(BaseModel):
+    data: dict[str, Any]
+    cached: bool
 
 def sanitize_input(text: str) -> str:
-    """Sanitize user input for chat to prevent basic injection."""
-    return re.sub(r'[^\w\s\.,!?\'"-]', '', text)
+    """
+    Sanitize user input to strip non-printable/special characters.
 
-def generate_simulated_status():
-    """Generates simulated real-time data for stadium exit flow and transport."""
-    colors = ["Red", "Yellow", "Green"]
-    gates = [
-        {"id": "Gate A", "status": random.choice(colors), "density": random.randint(10, 100)},
-        {"id": "Gate B", "status": random.choice(colors), "density": random.randint(10, 100)},
-        {"id": "Gate C", "status": random.choice(colors), "density": random.randint(10, 100)},
-        {"id": "Gate D", "status": random.choice(colors), "density": random.randint(10, 100)}
-    ]
+    Args:
+        text: Raw user-supplied string.
+
+    Returns:
+        Cleaned string safe to forward to the AI model.
+    """
+    return re.sub(r'[^\w\s\.,!?\'"-]', '', text).strip()
+
+def generate_simulated_status() -> dict[str, Any]:
+    """
+    Generate a fresh snapshot of stadium exit and transport conditions.
+
+    Density values are generated first, then the status colour is *derived*
+    from density so the two fields are always consistent:
+        - density >= 70  → Red   (congested)
+        - density >= 40  → Yellow (moderate)
+        - density <  40  → Green  (clear)
+
+    Returns:
+        Dict with ``gates`` and ``transport`` lists.
+    """
+    def _gate(name: str) -> dict[str, Any]:
+        density = random.randint(10, 100)
+        if density >= 70:
+            status = "Red"
+        elif density >= 40:
+            status = "Yellow"
+        else:
+            status = "Green"
+        return {"id": name, "status": status, "density": density}
+
+    gates = [_gate(f"Gate {letter}") for letter in "ABCD"]
     transport = [
         {"mode": "Metro", "wait_time": f"{random.randint(5, 30)}m"},
-        {"mode": "Cabs", "wait_time": f"{random.randint(10, 60)}m"},
-        {"mode": "Bus", "wait_time": f"{random.randint(5, 45)}m"}
+        {"mode": "Cabs",  "wait_time": f"{random.randint(10, 60)}m"},
+        {"mode": "Bus",   "wait_time": f"{random.randint(5, 45)}m"},
     ]
     return {"gates": gates, "transport": transport}
 
-@app.get("/api/stadium/status")
-def get_stadium_status():
+@app.get("/health", tags=["Ops"])
+async def health_check() -> dict[str, str]:
+    """Liveness probe for Cloud Run and load-balancer health checks."""
+    return {"status": "ok"}
+
+
+@app.get("/api/stadium/status", response_model=StatusResponse, tags=["Stadium"])
+async def get_stadium_status() -> StatusResponse:
     """
-    Returns real-time status of stadium gates and transportation.
-    Efficiency: Implements a 30-second local cache.
+    Return real-time status of stadium gates and transportation.
+
+    Efficiency: responses are served from a local in-memory cache for
+    ``CACHE_TTL`` seconds (currently 30 s) to avoid generating new random
+    data on every poll request.
     """
     current_time = time.time()
-    if state.cached_status and (current_time - state.last_update_time < 30):
-        return {"data": state.cached_status, "cached": True}
-    
+    if state.cached_status and (current_time - state.last_update_time < CACHE_TTL):
+        logger.debug("Serving cached stadium status")
+        return StatusResponse(data=state.cached_status, cached=True)
+
     new_data = generate_simulated_status()
     state.cached_status = new_data
     state.last_update_time = current_time
-    return {"data": new_data, "cached": False}
+    logger.info("Stadium status refreshed")
+    return StatusResponse(data=new_data, cached=False)
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat_concierge(request: ChatRequest):
+@app.post("/api/chat", response_model=ChatResponse, tags=["AI"])
+async def chat_concierge(request: ChatRequest) -> ChatResponse:
     """
-    AI Concierge endpoint connecting to Gemini API.
-    Provides stadium-related assistance based on user queries.
+    AI Concierge endpoint powered by the Gemini SDK.
+
+    Sanitizes user input before forwarding it to the model. When no API key
+    is present a deterministic fallback reply is returned so the frontend
+    remains functional during local development without credentials.
+
+    Args:
+        request: Validated ``ChatRequest`` containing the user message.
+
+    Returns:
+        ``ChatResponse`` with the model's reply.
+
+    Raises:
+        HTTPException 400: If the sanitized message is empty.
+        HTTPException 500: If the Gemini API call fails unexpectedly.
     """
+    sanitized_message = sanitize_input(request.message)
+    if not sanitized_message:
+        raise HTTPException(status_code=400, detail="Message is empty after sanitization.")
+
+    if not GENAI_API_KEY:
+        logger.warning("GEMINI_API_KEY not set — returning simulated response.")
+        return ChatResponse(reply=f"[Demo] You asked: '{sanitized_message}'. Set GEMINI_API_KEY for live AI responses.")
+
     try:
-        sanitized_message = sanitize_input(request.message)
-        if not sanitized_message.strip():
-            raise HTTPException(status_code=400, detail="Empty message")
-
-        if not GENAI_API_KEY:
-            # Fallback when no API Key is given
-            return ChatResponse(reply=f"Simulated response to: {sanitized_message} (No Google API key found)")
-
-        model = genai.GenerativeModel('gemini-3-flash')
-        prompt = f"You are an AI Concierge for a stadium. Be helpful, concise, and polite. User asks: {sanitized_message}"
+        model = get_gemini_model()
+        prompt = (
+            "You are a helpful, concise, and friendly AI Concierge for a large sports stadium. "
+            "Answer only stadium-related questions (exits, food, transport, seating, first aid). "
+            f"User asks: {sanitized_message}"
+        )
         response = await model.generate_content_async(prompt)
-        
-        reply_text = response.text if response.parts else "I'm sorry, I couldn't understand that."
+        reply_text = response.text if response.parts else "I'm sorry, I couldn't process that request."
+        logger.info("Gemini response generated successfully.")
         return ChatResponse(reply=reply_text)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise  # Let FastAPI handle these as-is
+    except Exception as exc:
+        logger.error("Gemini API error: %s", exc)
+        raise HTTPException(status_code=500, detail="The AI Concierge is temporarily unavailable.")
 
 # --- Serve Frontend Assets (For Docker/Cloud Run) ---
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
@@ -112,8 +192,12 @@ if os.path.isdir(frontend_dist):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
 
     @app.get("/{catchall:path}")
-    def serve_frontend(catchall: str):
-        file_path = os.path.join(frontend_dist, catchall)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
+    async def serve_frontend(catchall: str):
+        """Serve the React SPA; validates path stays within the dist directory."""
+        # Resolve to an absolute path and ensure it hasn't escaped frontend_dist
+        requested = os.path.realpath(os.path.join(frontend_dist, catchall))
+        if not requested.startswith(os.path.realpath(frontend_dist)):
+            raise HTTPException(status_code=400, detail="Invalid path.")
+        if os.path.isfile(requested):
+            return FileResponse(requested)
         return FileResponse(os.path.join(frontend_dist, "index.html"))

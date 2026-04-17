@@ -17,14 +17,14 @@ function App() {
         </div>
         <nav aria-label="Main Navigation">
           <ul className="flex gap-4 text-sm font-medium">
-            <li><a href="#" className="text-gray-400 hover:text-white transition-colors" aria-label="Go to Dashboard">Dashboard</a></li>
+            <li><a href="#dashboard" className="text-gray-400 hover:text-white transition-colors" aria-label="Go to Dashboard">Dashboard</a></li>
             <li><a href="#chat" className="text-gray-400 hover:text-white transition-colors" aria-label="Go to AI Concierge">AI Concierge</a></li>
           </ul>
         </nav>
       </header>
       
       <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <section className="lg:col-span-2 space-y-8" aria-label="Stadium Dashboard">
+        <section className="lg:col-span-2 space-y-8" id="dashboard" aria-label="Stadium Dashboard">
           <Dashboard />
         </section>
         

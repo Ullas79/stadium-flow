@@ -1,17 +1,32 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bot, Send, User } from 'lucide-react';
 
+const MAX_CHARS = 500;
+
 /**
- * Chat Component
- * AI Concierge interface communicating with the backend.
+ * Chat Component – AI Concierge
+ *
+ * Features:
+ * - Stable message IDs via `crypto.randomUUID()` (no array-index keys)
+ * - AbortController cleanup on unmount to prevent state updates on dead components
+ * - Character counter to mirror backend MAX_MESSAGE_LENGTH
+ * - Escape key clears the input field
+ * - Surfaces HTTP error detail from the backend in the chat bubble
+ *
+ * @returns {JSX.Element}
  */
+
 export default function Chat() {
   const [messages, setMessages] = useState([
-    { role: 'bot', text: 'Hello! I am your standard AI Stadium Concierge. How can I help you today?' }
+    { id: crypto.randomUUID(), role: 'bot', text: 'Hello! I am your AI Stadium Concierge. Ask me about gates, transport, food, or first aid.' }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const endOfMessagesRef = useRef(null);
+  const abortRef = useRef(null);
+
+  // Cleanup any in-flight request on unmount
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const scrollToBottom = () => {
     endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -23,32 +38,43 @@ export default function Chat() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    const trimmed = input.trim();
+    if (!trimmed || loading) return;
 
-    const userMsg = input;
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    const userMsg = trimmed;
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: userMsg }]);
     setInput('');
     setLoading(true);
+
+    abortRef.current = new AbortController();
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg })
+        body: JSON.stringify({ message: userMsg }),
+        signal: abortRef.current.signal,
       });
-      
+
       const data = await res.json();
       if (res.ok) {
-        setMessages(prev => [...prev, { role: 'bot', text: data.reply }]);
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: data.reply }]);
       } else {
-        setMessages(prev => [...prev, { role: 'bot', text: 'Sorry, I am having trouble connecting right now.' }]);
+        const detail = data?.detail ?? `Error ${res.status}`;
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: `⚠️ ${detail}` }]);
       }
     } catch (err) {
+      if (err.name === 'AbortError') return; // Component unmounted – suppress
       console.error(err);
-      setMessages(prev => [...prev, { role: 'bot', text: 'A network error occurred.' }]);
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: '⚠️ Network error. Please try again.' }]);
     } finally {
       setLoading(false);
     }
+  };
+
+  /** Clear input on Escape key */
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') setInput('');
   };
 
   return (
@@ -64,8 +90,8 @@ export default function Chat() {
         aria-label="Chat messages"
         aria-live="polite"
       >
-        {messages.map((m, idx) => (
-          <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        {messages.map((m) => (
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] p-4 rounded-2xl flex items-start gap-4 ${
               m.role === 'user' ? 'bg-brandAccent text-white rounded-tr-none' : 'bg-gray-800 text-gray-200 rounded-tl-none'
             }`}>
@@ -87,23 +113,32 @@ export default function Chat() {
         <div ref={endOfMessagesRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-800 flex gap-3 bg-black/20">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about gates, food, transport..."
-          className="flex-1 bg-black border border-gray-700 rounded-xl px-5 py-3 text-sm text-white focus:outline-none focus:border-brandAccent transition-colors"
-          aria-label="Type your message to the AI Concierge"
-        />
-        <button 
-          type="submit"
-          disabled={loading || !input.trim()}
-          className="bg-brandAccent text-white p-3 rounded-xl hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          aria-label="Send message"
-        >
-          <Send className="h-5 w-5" aria-hidden="true" />
-        </button>
+      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-800 flex flex-col gap-2 bg-black/20">
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value.slice(0, MAX_CHARS))}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about gates, food, transport… (Esc to clear)"
+            className="flex-1 bg-black border border-gray-700 rounded-xl px-5 py-3 text-sm text-white focus:outline-none focus:border-brandAccent transition-colors"
+            aria-label="Type your message to the AI Concierge"
+            maxLength={MAX_CHARS}
+          />
+          <button
+            type="submit"
+            disabled={loading || !input.trim()}
+            className="bg-brandAccent text-white p-3 rounded-xl hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="Send message"
+          >
+            <Send className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+        <div className={`text-right text-xs pr-1 ${
+          input.length >= MAX_CHARS ? 'text-red-400' : 'text-gray-600'
+        }`} aria-live="polite" aria-atomic="true">
+          {input.length}/{MAX_CHARS}
+        </div>
       </form>
     </div>
   );
