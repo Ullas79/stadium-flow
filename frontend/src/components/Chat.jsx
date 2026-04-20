@@ -16,6 +16,27 @@ const MAX_CHARS = 500;
  * @returns {JSX.Element}
  */
 
+const playNotificationSound = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1);
+    gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+  } catch (e) {
+    // Ignore audio errors (e.g. strict autoplay policies)
+  }
+};
+
 export default function Chat() {
   const [messages, setMessages] = useState([
     { id: crypto.randomUUID(), role: 'bot', text: 'Hello! I am your AI Stadium Concierge. Ask me about gates, transport, food, or first aid.' }
@@ -44,13 +65,11 @@ export default function Chat() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    const trimmed = input.trim();
+  const sendMessage = async (text) => {
+    const trimmed = text.trim();
     if (!trimmed || loading) return;
 
-    const userMsg = trimmed;
-    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: userMsg }]);
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }]);
     setInput('');
     setLoading(true);
 
@@ -60,13 +79,14 @@ export default function Chat() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({ message: trimmed }),
         signal: abortRef.current.signal,
       });
 
       const data = await res.json();
       if (res.ok) {
         setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: data.reply }]);
+        playNotificationSound();
       } else {
         const detail = data?.detail ?? `Error ${res.status}`;
         setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: `⚠️ ${detail}` }]);
@@ -80,6 +100,11 @@ export default function Chat() {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    sendMessage(input);
   };
 
   /** Clear input on Escape key */
@@ -123,7 +148,21 @@ export default function Chat() {
         <div ref={endOfMessagesRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="p-4 border-t border-white/5 flex flex-col gap-2 bg-black/40 backdrop-blur-md">
+      <form onSubmit={handleSubmit} className="p-4 border-t border-white/5 flex flex-col gap-3 bg-black/40 backdrop-blur-md">
+        {messages.length === 1 && (
+          <div className="flex gap-2 pb-1 overflow-x-auto scrollbar-hide">
+            {['🍔 Where is the food counter?', '🏃 Best exit gate?', '🚇 Metro wait time?', '🚑 First Aid'].map(promptText => (
+              <button
+                key={promptText}
+                type="button"
+                onClick={() => sendMessage(promptText)}
+                className="whitespace-nowrap px-3 py-1.5 rounded-lg bg-white/5 hover:bg-brandAccent/20 border border-white/10 text-[13px] text-brandAccent transition-all shadow-sm"
+              >
+                {promptText}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-3">
           <input
             type="text"
