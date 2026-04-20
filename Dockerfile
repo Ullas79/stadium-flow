@@ -27,6 +27,9 @@ COPY backend/ ./backend/
 # Copy built frontend from Stage 1 into backend for static serving
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 
+# Set working directory to backend so `uvicorn main:app` finds `utils.py`
+WORKDIR /app/backend
+
 # Switch to non-root user
 USER appuser
 
@@ -34,9 +37,6 @@ USER appuser
 ENV PORT="8080"
 EXPOSE 8080
 
-# Run uvicorn from inside /app/backend so that `from utils import ...` in
-# main.py resolves to the sibling utils.py on sys.path. Running with the
-# module path `backend.main:app` from /app would put /app on sys.path and
-# fail to find utils.py at import time, causing the "failed to start" error.
-CMD sh -c "cd /app/backend && uvicorn main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"
+# Run uvicorn using exec form to properly handle OS signals and port mapping
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]
 

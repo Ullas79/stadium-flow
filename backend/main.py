@@ -358,7 +358,9 @@ async def chat_concierge(request: ChatRequest, http_request: Request) -> ChatRes
 # Serve Frontend Assets (For Docker/Cloud Run)
 # ---------------------------------------------------------------------------
 
-frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+frontend_dist = os.path.join(os.path.dirname(_current_dir), "frontend", "dist")
+
 if os.path.isdir(frontend_dist):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
 
