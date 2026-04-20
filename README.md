@@ -166,13 +166,8 @@ docker run -p 8080:8080 \
   -e ALLOWED_ORIGINS=http://localhost:8080 \
   crowdsync
 
-# Visit http://localhost:8080
-```
-
-### Step 3 — Deploy to Cloud Run
-
-```bash
-gcloud run deploy crowdsync \
+# Deploy to Cloud Run
+gcloud run deploy stadium-flow \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
