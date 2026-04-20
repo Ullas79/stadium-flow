@@ -139,23 +139,48 @@ Expected output: **≥ 25 tests, ≥ 90 % coverage**.
 
 ## Docker / Cloud Run Deployment
 
+### Step 1 — Grant Vertex AI permissions to the Cloud Run service account
+
+> **This step is mandatory.** Cloud Run uses the Default Compute Service Account
+> (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`), which does **not**
+> have Vertex AI access by default. Skipping this means the AI Concierge will
+> throw a `403 Permission Denied` on every chat request.
+
+Find your `PROJECT_NUMBER` on the Google Cloud Console home page, then run:
+
 ```bash
-# Build
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+    --member="serviceAccount:YOUR_PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+    --role="roles/aiplatform.user"
+```
+
+### Step 2 — Build and run locally (optional smoke test)
+
+```bash
+# Build the multi-stage image
 docker build -t crowdsync .
 
 # Run locally
 docker run -p 8080:8080 \
   -e GOOGLE_CLOUD_PROJECT=your-project-id \
-  -e ALLOWED_ORIGINS=https://your-domain.com \
+  -e ALLOWED_ORIGINS=http://localhost:8080 \
   crowdsync
 
-# Deploy to Cloud Run
+# Visit http://localhost:8080
+```
+
+### Step 3 — Deploy to Cloud Run
+
+```bash
 gcloud run deploy crowdsync \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars GOOGLE_CLOUD_PROJECT=your-project-id
+  --set-env-vars GOOGLE_CLOUD_PROJECT=your-project-id,ALLOWED_ORIGINS=https://YOUR_CLOUD_RUN_URL
 ```
+
+> **Tip:** After the first deploy, Cloud Run gives you a permanent `*.run.app` URL.
+> Re-run the command above with `ALLOWED_ORIGINS` set to that URL to lock down CORS for production.
 
 ---
 
