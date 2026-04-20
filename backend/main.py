@@ -42,19 +42,21 @@ async def lifespan(app: FastAPI):
     """Initialise expensive resources once on startup; clean up on shutdown."""
     global _gemini_client
     
-    # Authenticate via Vertex AI using the environment's project ID.
-    # On Cloud Run, GOOGLE_CLOUD_PROJECT is automatically set.
+    # Authenticate via Vertex AI.
+    # On Cloud Run, ADC handles everything.
     # Locally, use 'gcloud auth application-default login'.
     vertex_project = os.getenv("GOOGLE_CLOUD_PROJECT")
     
-    if vertex_project:
-        try:
-            _gemini_client = genai.Client(vertexai=True, project=vertex_project, location="us-central1")
-            logger.info(f"Gemini client initialised securely via Vertex AI on {vertex_project}!")
-        except Exception as e:
-            logger.error(f"Failed to initialize Vertex AI client: {e}")
-    else:
-        logger.warning("GOOGLE_CLOUD_PROJECT not set. AI Concierge will use fallback responses.")
+    try:
+        kwargs = {"vertexai": True, "location": "us-central1"}
+        if vertex_project:
+            kwargs["project"] = vertex_project
+            
+        _gemini_client = genai.Client(**kwargs)
+        logger.info("Gemini client initialised securely via Vertex AI!")
+    except Exception as e:
+        logger.error(f"Failed to initialize Vertex AI client (ensure ADC is configured): {e}")
+        logger.warning("AI Concierge will use fallback responses.")
     yield
     # Shutdown: nothing to clean up for the Gemini SDK.
 
