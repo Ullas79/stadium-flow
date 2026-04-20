@@ -46,8 +46,9 @@ cd backend
 python -m venv venv
 venv\Scripts\activate        # macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
-# Add your key to .env
-echo GEMINI_API_KEY=your_key > .env
+# Authenticate with Google Cloud for Vertex AI
+gcloud auth application-default login
+export GOOGLE_CLOUD_PROJECT=your-project-id
 uvicorn main:app --reload
 ```
 
@@ -76,7 +77,7 @@ pytest test_main.py -v
 
 ```bash
 docker build -t crowdsync .
-docker run -p 8080:8080 -e GEMINI_API_KEY=your_key crowdsync
+docker run -p 8080:8080 -e GOOGLE_CLOUD_PROJECT=your-project-id crowdsync
 ```
 Visit `http://localhost:8080`.
 

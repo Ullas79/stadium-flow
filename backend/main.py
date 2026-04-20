@@ -29,9 +29,6 @@ CACHE_TTL: int = 30
 # Maximum allowed length for a chat message
 MAX_MESSAGE_LENGTH: int = 500
 
-# Configure Google Gemini
-GENAI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-
 # Singleton Gemini client — initialised once at startup via lifespan.
 _gemini_client: genai.Client | None = None
 
@@ -45,20 +42,19 @@ async def lifespan(app: FastAPI):
     """Initialise expensive resources once on startup; clean up on shutdown."""
     global _gemini_client
     
-    # Automatically use Vertex AI since we're deploying to Google Cloud!
-    vertex_project = os.getenv("GOOGLE_CLOUD_PROJECT", "stadiumflow-493912")
+    # Authenticate via Vertex AI using the environment's project ID.
+    # On Cloud Run, GOOGLE_CLOUD_PROJECT is automatically set.
+    # Locally, use 'gcloud auth application-default login'.
+    vertex_project = os.getenv("GOOGLE_CLOUD_PROJECT")
     
-    try:
-        # We explicitly set vertexai=True. No API keys needed—it uses Cloud Run's native service account!
-        _gemini_client = genai.Client(vertexai=True, project=vertex_project, location="us-central1")
-        logger.info(f"Gemini client initialised securely via Vertex AI on {vertex_project}!")
-    except Exception as e:
-        logger.warning(f"Failed to initialize Vertex AI client ({e}). Checking for fallback API key...")
-        if GENAI_API_KEY:
-            _gemini_client = genai.Client(api_key=GENAI_API_KEY)
-            logger.info("Fell back to standard Gemini client via API Key.")
-        else:
-            logger.warning("No authentication provided — AI Concierge will use fallback responses.")
+    if vertex_project:
+        try:
+            _gemini_client = genai.Client(vertexai=True, project=vertex_project, location="us-central1")
+            logger.info(f"Gemini client initialised securely via Vertex AI on {vertex_project}!")
+        except Exception as e:
+            logger.error(f"Failed to initialize Vertex AI client: {e}")
+    else:
+        logger.warning("GOOGLE_CLOUD_PROJECT not set. AI Concierge will use fallback responses.")
     yield
     # Shutdown: nothing to clean up for the Gemini SDK.
 

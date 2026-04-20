@@ -86,8 +86,7 @@ def test_chat_exceeds_max_length():
 
 
 def test_chat_fallback_response_shape(monkeypatch):
-    """Without an API key, the endpoint must still return a valid ChatResponse (200)."""
-    monkeypatch.setattr("main.GENAI_API_KEY", "")
+    """Without an active client, the endpoint must still return a valid ChatResponse (200)."""
     monkeypatch.setattr("main._gemini_client", None)
     response = client.post("/api/chat", json={"message": "Where is Gate A?"})
     # Strictly assert 200 — 500 means the fallback path is broken.
@@ -122,8 +121,7 @@ def test_chat_missing_field():
 
 
 def test_chat_valid_response_structure(monkeypatch):
-    """A valid message with no API key must return a JSON body with a 'reply' string."""
-    monkeypatch.setattr("main.GENAI_API_KEY", "")
+    """A valid message with no active client must return a JSON body with a 'reply' string."""
     monkeypatch.setattr("main._gemini_client", None)
     response = client.post("/api/chat", json={"message": "Where is Gate B?"})
     assert response.status_code == 200
