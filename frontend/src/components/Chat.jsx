@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Bot, Send, User } from 'lucide-react';
 
 const MAX_CHARS = 500;
@@ -10,8 +10,11 @@ const MAX_CHARS = 500;
  * - Stable message IDs via `crypto.randomUUID()` (no array-index keys)
  * - AbortController cleanup on unmount to prevent state updates on dead components
  * - Character counter to mirror backend MAX_MESSAGE_LENGTH
- * - Escape key clears the input field
+ * - Escape key clears the input field; Ctrl+Enter submits the message
  * - Surfaces HTTP error detail from the backend in the chat bubble
+ * - Message timestamps displayed with accessible `<time>` elements
+ * - Typing indicator with `aria-live="assertive"` for screen readers
+ * - Focus returns to input after bot replies
  *
  * @returns {JSX.Element}
  */
@@ -39,11 +42,17 @@ const playNotificationSound = () => {
 
 export default function Chat() {
   const [messages, setMessages] = useState([
-    { id: crypto.randomUUID(), role: 'bot', text: 'Hello! I am your AI Stadium Concierge. Ask me about gates, transport, food, or first aid.' }
+    {
+      id: crypto.randomUUID(),
+      role: 'bot',
+      text: 'Hello! I am your AI Stadium Concierge. Ask me about gates, transport, food, or first aid.',
+      timestamp: new Date(),
+    }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const endOfMessagesRef = useRef(null);
+  const inputRef = useRef(null);
   const abortRef = useRef(null);
   // Track whether the component is still mounted to avoid state updates after unmount.
   const mountedRef = useRef(true);
@@ -65,11 +74,19 @@ export default function Chat() {
     scrollToBottom();
   }, [messages]);
 
-  const sendMessage = async (text) => {
+  /** Format a Date as HH:MM for display. */
+  const formatTimestamp = (date) =>
+    date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+  /** ISO 8601 string for the <time> datetime attribute. */
+  const isoTimestamp = (date) => date?.toISOString() ?? '';
+
+  const sendMessage = useCallback(async (text) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
-    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }]);
+    const timestamp = new Date();
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed, timestamp }]);
     setInput('');
     setLoading(true);
 
@@ -84,32 +101,41 @@ export default function Chat() {
       });
 
       const data = await res.json();
+      const botTimestamp = new Date();
       if (res.ok) {
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: data.reply }]);
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: data.reply, timestamp: botTimestamp }]);
         playNotificationSound();
       } else {
         const detail = data?.detail ?? `Error ${res.status}`;
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: `⚠️ ${detail}` }]);
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: `⚠️ ${detail}`, timestamp: botTimestamp }]);
       }
     } catch (err) {
       if (err.name === 'AbortError') return; // Component unmounted – suppress
       console.error(err);
       if (mountedRef.current) {
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: '⚠️ Network error. Please try again.' }]);
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: '⚠️ Network error. Please try again.', timestamp: new Date() }]);
       }
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+        // Return focus to input after the bot replies
+        inputRef.current?.focus();
+      }
     }
-  };
+  }, [loading]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     sendMessage(input);
   };
 
-  /** Clear input on Escape key */
   const handleKeyDown = (e) => {
-    if (e.key === 'Escape') setInput('');
+    if (e.key === 'Escape') {
+      setInput('');
+    } else if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      sendMessage(input);
+    }
   };
 
   return (
@@ -118,8 +144,8 @@ export default function Chat() {
         <Bot className="h-7 w-7 text-brandAccent drop-shadow-md" aria-hidden="true" />
         <h2 className="text-xl font-semibold tracking-wide">AI Concierge</h2>
       </div>
-      
-      <div 
+
+      <div
         className="flex-1 overflow-y-auto p-5 space-y-5"
         role="log"
         aria-label="Chat messages"
@@ -127,17 +153,36 @@ export default function Chat() {
       >
         {messages.map((m) => (
           <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-slide-up`}>
-            <div className={`max-w-[85%] p-4 rounded-2xl flex items-start gap-4 shadow-sm ${
-              m.role === 'user' ? 'bg-gradient-to-br from-blue-500 to-brandAccent text-white rounded-tr-none' : 'bg-white/10 backdrop-blur-md text-gray-100 border border-white/5 rounded-tl-none'
+            <div className={`max-w-[85%] p-4 rounded-2xl flex flex-col gap-1 shadow-sm ${
+              m.role === 'user'
+                ? 'bg-gradient-to-br from-blue-500 to-brandAccent text-white rounded-tr-none'
+                : 'bg-white/10 backdrop-blur-md text-gray-100 border border-white/5 rounded-tl-none'
             }`}>
-              {m.role === 'bot' && <Bot className="h-5 w-5 mt-0.5 flex-shrink-0 opacity-80" aria-hidden="true" />}
-              <p className="text-[15px] leading-relaxed drop-shadow-sm">{m.text}</p>
-              {m.role === 'user' && <User className="h-5 w-5 mt-0.5 flex-shrink-0 opacity-80" aria-hidden="true" />}
+              <div className="flex items-start gap-4">
+                {m.role === 'bot' && <Bot className="h-5 w-5 mt-0.5 flex-shrink-0 opacity-80" aria-hidden="true" />}
+                <p className="text-[15px] leading-relaxed drop-shadow-sm">{m.text}</p>
+                {m.role === 'user' && <User className="h-5 w-5 mt-0.5 flex-shrink-0 opacity-80" aria-hidden="true" />}
+              </div>
+              {m.timestamp && (
+                <time
+                  dateTime={isoTimestamp(m.timestamp)}
+                  className={`text-[11px] opacity-50 self-end`}
+                  aria-label={`Sent at ${formatTimestamp(m.timestamp)}`}
+                >
+                  {formatTimestamp(m.timestamp)}
+                </time>
+              )}
             </div>
           </div>
         ))}
+
+        {/* Typing indicator with assertive aria-live so screen readers announce it immediately */}
         {loading && (
-          <div className="flex justify-start animate-fade-in">
+          <div
+            className="flex justify-start animate-fade-in"
+            aria-live="assertive"
+            aria-label="AI Concierge is typing"
+          >
             <div className="bg-white/5 backdrop-blur-md border border-white/5 text-gray-400 rounded-2xl rounded-tl-none p-4 text-sm flex gap-1.5 items-center">
               <span className="w-2 h-2 rounded-full bg-brandAccent/60 animate-pulse"></span>
               <span className="w-2 h-2 rounded-full bg-brandAccent/60 animate-pulse [animation-delay:150ms]"></span>
@@ -165,11 +210,13 @@ export default function Chat() {
         )}
         <div className="flex gap-3">
           <input
+            ref={inputRef}
+            id="chat-input"
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value.slice(0, MAX_CHARS))}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about gates, food, transport… (Esc to clear)"
+            placeholder="Ask about gates, food, transport… (Ctrl+Enter to send, Esc to clear)"
             className="flex-1 bg-black/50 border border-white/10 rounded-xl px-5 py-3 text-[15px] text-white placeholder:text-gray-500 focus:outline-none focus:border-brandAccent focus:ring-1 focus:ring-brandAccent transition-all shadow-inner"
             aria-label="Type your message to the AI Concierge"
             maxLength={MAX_CHARS}
@@ -183,9 +230,11 @@ export default function Chat() {
             <Send className="h-5 w-5 drop-shadow-md" aria-hidden="true" />
           </button>
         </div>
-        <div className={`text-right text-xs pr-1 ${
-          input.length >= MAX_CHARS ? 'text-red-400' : 'text-gray-600'
-        }`} aria-live="polite" aria-atomic="true">
+        <div
+          className={`text-right text-xs pr-1 ${input.length >= MAX_CHARS ? 'text-red-400' : 'text-gray-600'}`}
+          aria-live="polite"
+          aria-atomic="true"
+        >
           {input.length}/{MAX_CHARS}
         </div>
       </form>

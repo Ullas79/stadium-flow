@@ -5,7 +5,8 @@ import { Map, Train, Ticket, AlertCircle, RefreshCw, Clock } from 'lucide-react'
  * Dashboard Component
  * Polls the backend every 30 s (matching cache TTL) for stadium gate
  * statuses and transport wait times, then renders them with colour-coded
- * density cards and inline transport chips.
+ * density cards, accessible progress bars, and an embedded Google Maps
+ * view of the stadium location.
  *
  * @returns {JSX.Element}
  */
@@ -56,6 +57,13 @@ export default function Dashboard() {
     }
   };
 
+  /** Returns a Tailwind-compatible inline bar colour based on density status. */
+  const getDensityBarColor = (status) => {
+    if (status === 'Green') return 'bg-green-400';
+    if (status === 'Yellow') return 'bg-yellow-400';
+    return 'bg-red-400';
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -72,7 +80,11 @@ export default function Dashboard() {
       </div>
 
       {data.announcement && (
-        <div className="bg-gradient-to-r from-red-600 to-orange-500 rounded-xl p-4 text-white shadow-[0_0_20px_rgba(239,68,68,0.4)] flex items-center gap-3 animate-pulse-slow my-4 border border-red-400/50">
+        <div
+          className="bg-gradient-to-r from-red-600 to-orange-500 rounded-xl p-4 text-white shadow-[0_0_20px_rgba(239,68,68,0.4)] flex items-center gap-3 animate-pulse-slow my-4 border border-red-400/50"
+          role="alert"
+          aria-live="assertive"
+        >
           <AlertCircle className="h-6 w-6 flex-shrink-0" aria-hidden="true" />
           <p className="font-bold tracking-wide">{data.announcement}</p>
         </div>
@@ -98,12 +110,18 @@ export default function Dashboard() {
         <div className="flex flex-col lg:flex-row gap-8 items-start">
           {/* Interactive SVG Stadium Map */}
           <div className="w-full lg:w-1/2 flex justify-center items-center bg-black/20 rounded-2xl border border-white/5 p-8 shadow-inner">
-            <svg viewBox="0 0 200 200" className="w-full h-auto max-w-[350px] drop-shadow-2xl">
+            <svg
+              viewBox="0 0 200 200"
+              className="w-full h-auto max-w-[350px] drop-shadow-2xl"
+              role="img"
+              aria-label="Stadium gate density map showing gates A, B, C and D with colour-coded crowd levels"
+            >
+              <title>Stadium Gate Density Map</title>
               {/* Central Pitch */}
               <rect x="70" y="50" width="60" height="100" rx="10" className="fill-green-900/40 stroke-green-500/50 stroke-2" />
               <line x1="70" y1="100" x2="130" y2="100" className="stroke-green-500/50 stroke-1" />
               <circle cx="100" cy="100" r="15" className="fill-transparent stroke-green-500/50 stroke-1" />
-              
+
               {data.gates.map(gate => {
                 const getSVGFill = (status) => {
                   if(status === 'Green') return 'fill-green-500/30 stroke-green-400';
@@ -112,27 +130,27 @@ export default function Dashboard() {
                   return 'fill-gray-500/30 stroke-gray-400';
                 };
                 const style = `${getSVGFill(gate.status)} stroke-2 transition-colors duration-700`;
-                
+
                 if(gate.id.includes('A')) return (
-                  <g key={gate.id}>
+                  <g key={gate.id} aria-label={`Gate A – ${gate.status}`}>
                     <path d="M 40,30 Q 100,0 160,30 L 140,50 Q 100,25 60,50 Z" className={style} />
                     <text x="100" y="20" textAnchor="middle" fill="white" className="text-[10px] font-bold font-sans">Gate A</text>
                   </g>
                 );
                 if(gate.id.includes('B')) return (
-                  <g key={gate.id}>
+                  <g key={gate.id} aria-label={`Gate B – ${gate.status}`}>
                     <path d="M 170,40 Q 200,100 170,160 L 150,140 Q 175,100 150,60 Z" className={style} />
                     <text x="185" y="103" textAnchor="middle" fill="white" className="text-[10px] font-bold font-sans">Gate B</text>
                   </g>
                 );
                 if(gate.id.includes('C')) return (
-                  <g key={gate.id}>
+                  <g key={gate.id} aria-label={`Gate C – ${gate.status}`}>
                     <path d="M 40,170 Q 100,200 160,170 L 140,150 Q 100,175 60,150 Z" className={style} />
                     <text x="100" y="190" textAnchor="middle" fill="white" className="text-[10px] font-bold font-sans">Gate C</text>
                   </g>
                 );
                 if(gate.id.includes('D')) return (
-                  <g key={gate.id}>
+                  <g key={gate.id} aria-label={`Gate D – ${gate.status}`}>
                     <path d="M 30,40 Q 0,100 30,160 L 50,140 Q 25,100 50,60 Z" className={style} />
                     <text x="15" y="103" textAnchor="middle" fill="white" className="text-[10px] font-bold font-sans">Gate D</text>
                   </g>
@@ -157,8 +175,23 @@ export default function Dashboard() {
                     {gate.status}
                   </span>
                 </div>
-                <p className="text-xs opacity-80 mt-1">Density: {gate.density}%</p>
-  
+                <p className="text-xs opacity-80">Density: {gate.density}%</p>
+
+                {/* Accessible density progress bar */}
+                <div
+                  role="progressbar"
+                  aria-valuenow={gate.density}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`${gate.id} crowd density: ${gate.density}%`}
+                  className="w-full bg-black/30 rounded-full h-2 mt-1 overflow-hidden"
+                >
+                  <div
+                    className={`h-2 rounded-full transition-all duration-700 ${getDensityBarColor(gate.status)}`}
+                    style={{ width: `${gate.density}%` }}
+                  />
+                </div>
+
                 {gate.status === 'Green' && (
                   <div className="mt-3 p-3 bg-white/5 rounded-xl flex items-start gap-3 border border-white/10 shadow-lg" role="alert">
                     <div className="bg-green-500/20 p-1.5 rounded-lg shrink-0">
@@ -187,6 +220,27 @@ export default function Dashboard() {
             <span className="font-bold text-3xl text-white tracking-tight">{t.wait_time}</span>
           </div>
         ))}
+      </div>
+
+      {/* Google Maps Embed – Narendra Modi Stadium, Ahmedabad */}
+      <div className="pt-8 border-t border-white/5">
+        <h2 className="text-2xl font-semibold flex items-center gap-2 mb-4">
+          <Map className="h-6 w-6 text-brandAccent" aria-hidden="true" />
+          Stadium Location
+        </h2>
+        <div className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl" style={{ height: '320px' }}>
+          <iframe
+            title="Narendra Modi Stadium location on Google Maps"
+            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3671.5!2d72.5953!3d23.0901!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x395e849bd47fbc2f%3A0x8d8e9c2c6e5f7b6a!2sNarendra%20Modi%20Stadium!5e0!3m2!1sen!2sin!4v1681000000000!5m2!1sen!2sin"
+            width="100%"
+            height="100%"
+            style={{ border: 0 }}
+            allowFullScreen
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            aria-label="Interactive Google Map showing Narendra Modi Stadium location"
+          />
+        </div>
       </div>
     </div>
   );
