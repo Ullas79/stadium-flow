@@ -2,18 +2,21 @@
 FastAPI backend for CrowdSync.
 Handles stadium gate statuses, transport wait times, and AI Concierge chat.
 """
+import asyncio
 import os
 import time
 import random
 import re
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,21 +29,55 @@ CACHE_TTL: int = 30
 # Maximum allowed length for a chat message
 MAX_MESSAGE_LENGTH: int = 500
 
-app = FastAPI(title="CrowdSync API", description="Proactive stadium crowd management system")
-
-# Security: Add CORSMiddleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], 
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
-
 # Configure Google Gemini
 GENAI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-if GENAI_API_KEY:
-    genai.configure(api_key=GENAI_API_KEY)
+
+# Singleton Gemini client — initialised once at startup via lifespan.
+_gemini_client: genai.Client | None = None
+
+# Lock to serialise cache refreshes and prevent redundant Gemini instantiation
+# under concurrent async requests.
+_status_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialise expensive resources once on startup; clean up on shutdown."""
+    global _gemini_client
+    if GENAI_API_KEY:
+        # Instantiate the client once — reused for every /api/chat request.
+        _gemini_client = genai.Client(api_key=GENAI_API_KEY)
+        logger.info("Gemini client initialised.")
+    else:
+        logger.warning("GEMINI_API_KEY not set — AI Concierge will use fallback responses.")
+    yield
+    # Shutdown: nothing to clean up for the Gemini SDK.
+
+
+app = FastAPI(
+    title="CrowdSync API",
+    description="Proactive stadium crowd management system",
+    lifespan=lifespan,
+)
+
+# Security: Restrict CORS to known origins and explicit headers only.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Accept"],
+)
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Inject basic web security headers for hardened Cloud Run deployment."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 
 # --- State & Caching ---
 class StadiumState:
@@ -50,32 +87,38 @@ class StadiumState:
         self.cached_status: dict[str, Any] | None = None
         self.last_update_time: float = 0.0
 
+
 state = StadiumState()
 
-# Singleton Gemini model — instantiated once, reused per request.
-_gemini_model: genai.GenerativeModel | None = None
-
-def get_gemini_model() -> genai.GenerativeModel:
-    """Return a cached Gemini model instance, creating it only once."""
-    global _gemini_model
-    if _gemini_model is None:
-        _gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-    return _gemini_model
 
 # --- Pydantic Models ---
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_LENGTH, description="User chat message")
 
+
 class ChatResponse(BaseModel):
     reply: str = Field(..., description="AI Concierge reply")
+
 
 class StatusResponse(BaseModel):
     data: dict[str, Any]
     cached: bool
 
+
+# Valid characters accepted in a chat message.
+# Allows letters, digits, spaces and common punctuation used in stadium queries.
+_SAFE_MESSAGE_RE = re.compile(r"^[\w\s.,!?'\"@/:()&#\-]+$")
+
+
 def sanitize_input(text: str) -> str:
     """
-    Sanitize user input to strip non-printable/special characters.
+    Sanitize user input to remove only genuinely dangerous content.
+
+    Rather than silently stripping characters (which can corrupt meaningful
+    queries such as "Gate B/C exit?" → "Gate BC exit"), this function:
+      1. Strips surrounding whitespace.
+      2. Removes HTML/XML-like tags unconditionally.
+      3. Returns the cleaned string; callers reject empty results.
 
     Args:
         text: Raw user-supplied string.
@@ -83,7 +126,11 @@ def sanitize_input(text: str) -> str:
     Returns:
         Cleaned string safe to forward to the AI model.
     """
-    return re.sub(r'[^\w\s\.,!?\'"-]', '', text).strip()
+    stripped = text.strip()
+    # Remove HTML/XML tags (catches <script>, <img>, etc.)
+    stripped = re.sub(r"<[^>]+>", "", stripped).strip()
+    return stripped
+
 
 def generate_simulated_status() -> dict[str, Any]:
     """
@@ -116,6 +163,7 @@ def generate_simulated_status() -> dict[str, Any]:
     ]
     return {"gates": gates, "transport": transport}
 
+
 @app.get("/health", tags=["Ops"])
 async def health_check() -> dict[str, str]:
     """Liveness probe for Cloud Run and load-balancer health checks."""
@@ -130,17 +178,30 @@ async def get_stadium_status() -> StatusResponse:
     Efficiency: responses are served from a local in-memory cache for
     ``CACHE_TTL`` seconds (currently 30 s) to avoid generating new random
     data on every poll request.
+
+    Concurrency: an ``asyncio.Lock`` is used to serialise cache refreshes,
+    preventing multiple concurrent requests from all triggering a refresh
+    simultaneously (double-checked locking pattern).
     """
     current_time = time.time()
+    # Fast path: serve from cache without acquiring the lock.
     if state.cached_status and (current_time - state.last_update_time < CACHE_TTL):
         logger.debug("Serving cached stadium status")
         return StatusResponse(data=state.cached_status, cached=True)
 
-    new_data = generate_simulated_status()
-    state.cached_status = new_data
-    state.last_update_time = current_time
-    logger.info("Stadium status refreshed")
-    return StatusResponse(data=new_data, cached=False)
+    # Slow path: acquire lock, re-check, then refresh.
+    async with _status_lock:
+        current_time = time.time()
+        if state.cached_status and (current_time - state.last_update_time < CACHE_TTL):
+            # Another coroutine refreshed the cache while we were waiting.
+            return StatusResponse(data=state.cached_status, cached=True)
+
+        new_data = generate_simulated_status()
+        state.cached_status = new_data
+        state.last_update_time = current_time
+        logger.info("Stadium status refreshed")
+        return StatusResponse(data=new_data, cached=False)
+
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["AI"])
 async def chat_concierge(request: ChatRequest) -> ChatResponse:
@@ -165,19 +226,23 @@ async def chat_concierge(request: ChatRequest) -> ChatResponse:
     if not sanitized_message:
         raise HTTPException(status_code=400, detail="Message is empty after sanitization.")
 
-    if not GENAI_API_KEY:
+    if not GENAI_API_KEY or _gemini_client is None:
         logger.warning("GEMINI_API_KEY not set — returning simulated response.")
-        return ChatResponse(reply=f"[Demo] You asked: '{sanitized_message}'. Set GEMINI_API_KEY for live AI responses.")
+        return ChatResponse(
+            reply=f"[Demo] You asked: '{sanitized_message}'. Set GEMINI_API_KEY for live AI responses."
+        )
 
     try:
-        model = get_gemini_model()
         prompt = (
             "You are a helpful, concise, and friendly AI Concierge for a large sports stadium. "
             "Answer only stadium-related questions (exits, food, transport, seating, first aid). "
             f"User asks: {sanitized_message}"
         )
-        response = await model.generate_content_async(prompt)
-        reply_text = response.text if response.parts else "I'm sorry, I couldn't process that request."
+        response = await _gemini_client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        reply_text = response.text if response.text else "I'm sorry, I couldn't process that request."
         logger.info("Gemini response generated successfully.")
         return ChatResponse(reply=reply_text)
     except HTTPException:
@@ -185,6 +250,7 @@ async def chat_concierge(request: ChatRequest) -> ChatResponse:
     except Exception as exc:
         logger.error("Gemini API error: %s", exc)
         raise HTTPException(status_code=500, detail="The AI Concierge is temporarily unavailable.")
+
 
 # --- Serve Frontend Assets (For Docker/Cloud Run) ---
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")

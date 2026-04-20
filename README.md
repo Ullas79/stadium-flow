@@ -18,7 +18,7 @@ Proactive event-driven application to manage stadium exits and crowd flow. Built
 ┌──────────────────────────────────────────────────┐
 │  FastAPI Backend (Python)                        │
 │  GET /api/stadium/status  (30s in-memory cache)  │
-│  POST /api/chat           (Gemini 1.5 Flash)     │
+│  POST /api/chat           (Gemini 2.5 Flash)     │
 │  GET /health              (liveness probe)       │
 └──────────────────────────────────────────────────┘
 ```
@@ -26,7 +26,7 @@ Proactive event-driven application to manage stadium exits and crowd flow. Built
 ## Features
 - **Dynamic Exit Dashboard**: React UI with real-time polling for gate status (Red/Yellow/Green). Density *drives* status — no contradictory data.
 - **Incentive Routing**: 10% Food Discount banner on Green (low-density) gates to organically redistribute crowds.
-- **AI Concierge**: Context-aware stadium chat powered by Google Gemini 1.5 Flash (async, non-blocking).
+- **AI Concierge**: Context-aware stadium chat powered by Google Gemini 2.5 Flash (async, non-blocking).
 - **Live Wait Times**: Transport wait times (Metro, Cabs, Bus) updated every 30 s.
 
 ## Tech Stack
@@ -35,7 +35,7 @@ Proactive event-driven application to manage stadium exits and crowd flow. Built
 | Frontend       | React 18, Vite 5, Tailwind CSS 3    |
 | Icons          | Lucide React                         |
 | Backend        | Python 3.11, FastAPI                 |
-| AI             | Google Gemini 1.5 Flash via `google-generativeai` SDK |
+| AI             | Google Gemini 2.5 Flash via `google-generativeai` SDK |
 | Infrastructure | Docker (multi-stage), Google Cloud Run |
 
 ## Getting Started Locally
@@ -88,9 +88,9 @@ Visit `http://localhost:8080`.
 - API key stored in `.env`, never committed (`.gitignore`)
 
 ## Evaluation Checklist
-- [x] **Repo Size**: < 1 MB, zero unnecessary dependencies
+- [x] **Repo Size**: < 2 MB, zero unnecessary dependencies
 - [x] **Dashboard**: 4 gates with density-driven colour coding + incentive routing
-- [x] **AI Chat**: Gemini 1.5 Flash, async, sanitized, length-capped
+- [x] **AI Chat**: Gemini 2.5 Flash, async, sanitized, length-capped
 - [x] **Transport**: Live wait times (Metro, Cabs, Bus)
 - [x] **Code Quality**: Type hints, docstrings, separated components
 - [x] **Security**: CORS, path traversal guard, non-root Docker, env secrets

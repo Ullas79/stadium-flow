@@ -24,9 +24,17 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const endOfMessagesRef = useRef(null);
   const abortRef = useRef(null);
+  // Track whether the component is still mounted to avoid state updates after unmount.
+  const mountedRef = useRef(true);
 
-  // Cleanup any in-flight request on unmount
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // Cleanup any in-flight request on unmount and mark component as dead.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const scrollToBottom = () => {
     endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -66,9 +74,11 @@ export default function Chat() {
     } catch (err) {
       if (err.name === 'AbortError') return; // Component unmounted – suppress
       console.error(err);
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: '⚠️ Network error. Please try again.' }]);
+      if (mountedRef.current) {
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'bot', text: '⚠️ Network error. Please try again.' }]);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
@@ -78,10 +88,10 @@ export default function Chat() {
   };
 
   return (
-    <div className="bg-darkCard border border-gray-800 rounded-2xl flex flex-col h-[650px] overflow-hidden">
-      <div className="p-5 border-b border-gray-800 bg-black/20 flex items-center gap-3">
-        <Bot className="h-7 w-7 text-brandAccent" aria-hidden="true" />
-        <h2 className="text-xl font-semibold">AI Concierge</h2>
+    <div className="glass flex flex-col h-[650px] overflow-hidden shadow-2xl">
+      <div className="p-5 border-b border-white/5 bg-black/20 flex items-center gap-3">
+        <Bot className="h-7 w-7 text-brandAccent drop-shadow-md" aria-hidden="true" />
+        <h2 className="text-xl font-semibold tracking-wide">AI Concierge</h2>
       </div>
       
       <div 
@@ -91,29 +101,29 @@ export default function Chat() {
         aria-live="polite"
       >
         {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] p-4 rounded-2xl flex items-start gap-4 ${
-              m.role === 'user' ? 'bg-brandAccent text-white rounded-tr-none' : 'bg-gray-800 text-gray-200 rounded-tl-none'
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-slide-up`}>
+            <div className={`max-w-[85%] p-4 rounded-2xl flex items-start gap-4 shadow-sm ${
+              m.role === 'user' ? 'bg-gradient-to-br from-blue-500 to-brandAccent text-white rounded-tr-none' : 'bg-white/10 backdrop-blur-md text-gray-100 border border-white/5 rounded-tl-none'
             }`}>
-              {m.role === 'bot' && <Bot className="h-5 w-5 mt-0.5 flex-shrink-0" aria-hidden="true" />}
-              <p className="text-[15px] leading-relaxed">{m.text}</p>
-              {m.role === 'user' && <User className="h-5 w-5 mt-0.5 flex-shrink-0" aria-hidden="true" />}
+              {m.role === 'bot' && <Bot className="h-5 w-5 mt-0.5 flex-shrink-0 opacity-80" aria-hidden="true" />}
+              <p className="text-[15px] leading-relaxed drop-shadow-sm">{m.text}</p>
+              {m.role === 'user' && <User className="h-5 w-5 mt-0.5 flex-shrink-0 opacity-80" aria-hidden="true" />}
             </div>
           </div>
         ))}
         {loading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-800 text-gray-400 rounded-2xl rounded-tl-none p-4 text-sm flex gap-1 items-center">
-              <span className="w-2 h-2 rounded-full bg-gray-500 animate-pulse"></span>
-              <span className="w-2 h-2 rounded-full bg-gray-500 animate-pulse delay-75"></span>
-              <span className="w-2 h-2 rounded-full bg-gray-500 animate-pulse delay-150"></span>
+          <div className="flex justify-start animate-fade-in">
+            <div className="bg-white/5 backdrop-blur-md border border-white/5 text-gray-400 rounded-2xl rounded-tl-none p-4 text-sm flex gap-1.5 items-center">
+              <span className="w-2 h-2 rounded-full bg-brandAccent/60 animate-pulse"></span>
+              <span className="w-2 h-2 rounded-full bg-brandAccent/60 animate-pulse [animation-delay:150ms]"></span>
+              <span className="w-2 h-2 rounded-full bg-brandAccent/60 animate-pulse [animation-delay:300ms]"></span>
             </div>
           </div>
         )}
         <div ref={endOfMessagesRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-800 flex flex-col gap-2 bg-black/20">
+      <form onSubmit={handleSubmit} className="p-4 border-t border-white/5 flex flex-col gap-2 bg-black/40 backdrop-blur-md">
         <div className="flex gap-3">
           <input
             type="text"
@@ -121,17 +131,17 @@ export default function Chat() {
             onChange={(e) => setInput(e.target.value.slice(0, MAX_CHARS))}
             onKeyDown={handleKeyDown}
             placeholder="Ask about gates, food, transport… (Esc to clear)"
-            className="flex-1 bg-black border border-gray-700 rounded-xl px-5 py-3 text-sm text-white focus:outline-none focus:border-brandAccent transition-colors"
+            className="flex-1 bg-black/50 border border-white/10 rounded-xl px-5 py-3 text-[15px] text-white placeholder:text-gray-500 focus:outline-none focus:border-brandAccent focus:ring-1 focus:ring-brandAccent transition-all shadow-inner"
             aria-label="Type your message to the AI Concierge"
             maxLength={MAX_CHARS}
           />
           <button
             type="submit"
             disabled={loading || !input.trim()}
-            className="bg-brandAccent text-white p-3 rounded-xl hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="bg-gradient-to-r from-blue-600 to-brandAccent text-white p-3 rounded-xl hover:scale-105 hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed transition-all"
             aria-label="Send message"
           >
-            <Send className="h-5 w-5" aria-hidden="true" />
+            <Send className="h-5 w-5 drop-shadow-md" aria-hidden="true" />
           </button>
         </div>
         <div className={`text-right text-xs pr-1 ${

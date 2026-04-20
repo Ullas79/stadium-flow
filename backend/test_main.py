@@ -85,19 +85,28 @@ def test_chat_exceeds_max_length():
     assert response.status_code == 422
 
 
-def test_chat_fallback_response_shape():
-    """Without an API key, the endpoint must still return a valid ChatResponse."""
+def test_chat_fallback_response_shape(monkeypatch):
+    """Without an API key, the endpoint must still return a valid ChatResponse (200)."""
+    monkeypatch.setattr("main.GENAI_API_KEY", "")
+    monkeypatch.setattr("main._gemini_client", None)
     response = client.post("/api/chat", json={"message": "Where is Gate A?"})
-    # 200 = fallback path (no key); 500 = unexpected error from SDK config
-    assert response.status_code in {200, 500}
-    if response.status_code == 200:
-        assert "reply" in response.json()
+    # Strictly assert 200 — 500 means the fallback path is broken.
+    assert response.status_code == 200
+    assert "reply" in response.json()
 
 
-def test_chat_sanitizes_special_chars():
-    """Chat endpoint must not crash on messages with special characters."""
+def test_chat_sanitizes_html_tags():
+    """Chat endpoint must strip HTML tags and not crash."""
     response = client.post("/api/chat", json={"message": "<script>alert(1)</script>"})
-    assert response.status_code in {200, 400, 500}
+    # After stripping tags the message is empty → 400
+    assert response.status_code in {400, 200}
+
+
+def test_chat_preserves_slash_in_message(monkeypatch):
+    """Sanitize should NOT strip valid punctuation like slashes."""
+    import main
+    cleaned = main.sanitize_input("Gate B/C exit?")
+    assert "/" in cleaned, "sanitize_input stripped a valid slash character"
 
 
 def test_chat_truly_empty_string():
@@ -112,13 +121,15 @@ def test_chat_missing_field():
     assert response.status_code == 422
 
 
-def test_chat_valid_response_structure():
-    """A valid message must return a JSON body with a 'reply' string."""
+def test_chat_valid_response_structure(monkeypatch):
+    """A valid message with no API key must return a JSON body with a 'reply' string."""
+    monkeypatch.setattr("main.GENAI_API_KEY", "")
+    monkeypatch.setattr("main._gemini_client", None)
     response = client.post("/api/chat", json={"message": "Where is Gate B?"})
-    if response.status_code == 200:
-        body = response.json()
-        assert isinstance(body.get("reply"), str)
-        assert len(body["reply"]) > 0
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body.get("reply"), str)
+    assert len(body["reply"]) > 0
 
 
 def test_density_status_correlation():

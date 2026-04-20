@@ -4,6 +4,15 @@
 
 @layer base {
   body {
-    @apply bg-darkBg text-white antialiased;
+    @apply bg-darkBg text-gray-100 antialiased font-sans selection:bg-brandAccent/30 selection:text-white;
+    background-image: radial-gradient(circle at top, rgba(59, 130, 246, 0.05), transparent 40%),
+                      radial-gradient(circle at bottom right, rgba(147, 51, 234, 0.05), transparent 40%);
+    background-attachment: fixed;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-darkCard backdrop-blur-xl border border-white/5 shadow-xl;
   }
 }
