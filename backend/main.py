@@ -233,10 +233,23 @@ async def chat_concierge(request: ChatRequest) -> ChatResponse:
         )
 
     try:
+        # Inject real-time stadium context directly into the prompt!
+        current_status = state.cached_status or generate_simulated_status()
+        
+        gate_info = ", ".join([f"{g['id']}: {g['status']} (Density: {g['density']}%)" for g in current_status.get("gates", [])])
+        transport_info = ", ".join([f"{t['mode']}: {t['wait_time']}" for t in current_status.get("transport", [])])
+        
         prompt = (
-            "You are a helpful, concise, and friendly AI Concierge for a large sports stadium. "
-            "Answer only stadium-related questions (exits, food, transport, seating, first aid). "
-            f"User asks: {sanitized_message}"
+            "You are a strictly constrained, helpful AI Concierge for Stadium Flow. "
+            "Use the following real-time stadium context to answer the user's query intelligently:\n"
+            f"[LIVE GATES]: {gate_info}\n"
+            f"[LIVE TRANSPORT]: {transport_info}\n"
+            "[STADIUM KNOWLEDGE]:\n"
+            "- First Aid is located at Section 112, Section 340, and adjacent to the main concourse near Gate A.\n"
+            "- For users looking to exit or find a gate, ALWAYS recommend the gates that are 'Green' (low density).\n"
+            "- Mention that proceeding to a 'Green' gate grants a 10% food/beverage discount!\n"
+            "If the user asks something completely unrelated to the stadium (e.g. coding, general facts), politely decline.\n\n"
+            f"User query: {sanitized_message}\nConcierge:"
         )
         response = await _gemini_client.aio.models.generate_content(
             model="gemini-2.5-flash",
