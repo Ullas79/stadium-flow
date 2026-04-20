@@ -44,12 +44,21 @@ _status_lock = asyncio.Lock()
 async def lifespan(app: FastAPI):
     """Initialise expensive resources once on startup; clean up on shutdown."""
     global _gemini_client
-    if GENAI_API_KEY:
-        # Instantiate the client once — reused for every /api/chat request.
-        _gemini_client = genai.Client(api_key=GENAI_API_KEY)
-        logger.info("Gemini client initialised.")
-    else:
-        logger.warning("GEMINI_API_KEY not set — AI Concierge will use fallback responses.")
+    
+    # Automatically use Vertex AI since we're deploying to Google Cloud!
+    vertex_project = os.getenv("GOOGLE_CLOUD_PROJECT", "stadiumflow-493912")
+    
+    try:
+        # We explicitly set vertexai=True. No API keys needed—it uses Cloud Run's native service account!
+        _gemini_client = genai.Client(vertexai=True, project=vertex_project, location="us-central1")
+        logger.info(f"Gemini client initialised securely via Vertex AI on {vertex_project}!")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Vertex AI client ({e}). Checking for fallback API key...")
+        if GENAI_API_KEY:
+            _gemini_client = genai.Client(api_key=GENAI_API_KEY)
+            logger.info("Fell back to standard Gemini client via API Key.")
+        else:
+            logger.warning("No authentication provided — AI Concierge will use fallback responses.")
     yield
     # Shutdown: nothing to clean up for the Gemini SDK.
 
@@ -226,10 +235,10 @@ async def chat_concierge(request: ChatRequest) -> ChatResponse:
     if not sanitized_message:
         raise HTTPException(status_code=400, detail="Message is empty after sanitization.")
 
-    if not GENAI_API_KEY or _gemini_client is None:
-        logger.warning("GEMINI_API_KEY not set — returning simulated response.")
+    if _gemini_client is None:
+        logger.warning("Vertex/Gemini client not initialized — returning simulated response.")
         return ChatResponse(
-            reply=f"[Demo] You asked: '{sanitized_message}'. Set GEMINI_API_KEY for live AI responses."
+            reply=f"[Demo] You asked: '{sanitized_message}'. Vertex AI is not configured."
         )
 
     try:
@@ -262,7 +271,7 @@ async def chat_concierge(request: ChatRequest) -> ChatResponse:
         raise  # Let FastAPI handle these as-is
     except Exception as exc:
         logger.error("Gemini API error: %s", exc)
-        raise HTTPException(status_code=500, detail="The AI Concierge is temporarily unavailable.")
+        raise HTTPException(status_code=500, detail=f"AI Error ({type(exc).__name__}): {str(exc)}")
 
 
 # --- Serve Frontend Assets (For Docker/Cloud Run) ---
