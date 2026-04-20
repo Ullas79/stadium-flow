@@ -150,7 +150,7 @@ docker run -p 8080:8080 \
   crowdsync
 
 # Deploy to Cloud Run
-gcloud run deploy crowdsync \
+gcloud run deploy stadium-flow \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
