@@ -34,5 +34,9 @@ USER appuser
 ENV PORT="8080"
 EXPOSE 8080
 
-# Run uvicorn natively, passing the Cloud Run PORT variable and enabling proxy headers
-CMD sh -c "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"
+# Run uvicorn from inside /app/backend so that `from utils import ...` in
+# main.py resolves to the sibling utils.py on sys.path. Running with the
+# module path `backend.main:app` from /app would put /app on sys.path and
+# fail to find utils.py at import time, causing the "failed to start" error.
+CMD sh -c "cd /app/backend && uvicorn main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"
+

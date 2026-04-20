@@ -134,17 +134,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Security: Restrict CORS to known origins (configurable via env for production).
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+# Security: CORS origins configurable via env var.
+# Set ALLOWED_ORIGINS=* to allow all origins (public Cloud Run deployment).
+# Set to a comma-separated list of URLs to restrict to specific origins.
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+if _raw_origins.strip() == "*":
+    _cors_origins = ["*"]
+    _cors_credentials = False          # credentials cannot be used with allow_origins=["*"]
+else:
+    _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    _cors_credentials = True
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Accept"],
 )
+
 
 
 @app.middleware("http")
